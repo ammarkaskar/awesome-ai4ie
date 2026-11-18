@@ -17,6 +17,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A code of conduct, a security policy, and the test and coding-standard rules in
   CONTRIBUTING.md.
 - An architecture description in the README.
+- CITATION.cff, codemeta.json and .zenodo.json, kept in agreement by the citesync hook,
+  so GitHub shows "Cite this repository".
 - A page-weight budget (`pnpm run page-weight`): CI fails when a built page's first-visit
   transfer goes over its budget.
 
