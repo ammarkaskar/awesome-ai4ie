@@ -84,6 +84,13 @@ for (const colorScheme of ["light", "dark"]) {
   ).newPage();
   for (const path of pages) {
     await page.goto(new URL(path, root).href);
+    if (path === "") {
+      const targets = await page
+        .locator(".flow svg:visible .flow-hit")
+        .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+      if (targets.some((height) => height < 24))
+        fail("320px: a Fig. 1 label has a hit area under 24px");
+    }
     await page.addStyleTag({ content: "html { font-size: 200% !important; }" });
     const wider = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     if (wider > 0) {
@@ -124,6 +131,16 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
   // Fig. 1: keyboard focus on a node lights its bands and names its reach in
   // the live readout, the same as pointing at it; leaving restores both.
   await page.goto(root);
+  await page.evaluate(() => document.fonts.ready);
+  const clippedLabels = await page.locator(".flow svg:visible text").evaluateAll((labels) =>
+    labels
+      .filter((label) => {
+        const { left, right } = label.getBoundingClientRect();
+        return left < 0 || right > innerWidth;
+      })
+      .map((label) => label.textContent),
+  );
+  if (clippedLabels.length) fail(`${name}: clipped Fig. 1 labels: ${clippedLabels.join(", ")}`);
   const readout = page.locator(".flow-readout");
   const idle = await readout.textContent();
   const node = page.locator(".flow svg:visible .flow-node").first();
@@ -136,6 +153,19 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
   await node.blur();
   if ((await readout.textContent()) !== idle || (await page.locator(".flow .band.lit").count()))
     fail(`${name}: leaving a Fig. 1 node left it lit`);
+
+  await page.route("**/api/search", (route) => route.fulfill({ json: { hits: [] } }));
+  await page.locator("site-search button[data-open-modal]").click();
+  const query = "what papers map buildings";
+  await page.locator(".pagefind-ui__search-input").fill(query);
+  const suggest = page.locator(".ss-gap a");
+  await suggest.waitFor();
+  const suggestionUrl = new URL(await suggest.getAttribute("href"), root);
+  if (
+    suggestionUrl.searchParams.has("gap") ||
+    suggestionUrl.href.includes(encodeURIComponent(query))
+  )
+    fail(`${name}: the GitHub suggestion link includes the search query`);
 }
 
 await browser.close();
