@@ -9,6 +9,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Resources in `src/data/resources.yaml`: the tools, datasets and models from the tools
+  pages, plus 14 courses, videos, posts and communities proposed for review. The tools pages
+  and the literature page list them with a `Resources` component, which explainer sections
+  also use to link a course or a video. A new issue form suggests a course, video, post or
+  community.
+- Example uses for each Agent Skill on the prompts-and-skills page.
 - The IE fields now follow the [ISIE sections](https://is4ie.org/sections): life cycle
   assessment, socio-economic metabolism, input-output, circular economy and industrial
   symbiosis. They replace MFA, waste & EoL and urban mining, and the input-output topic

@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { z } from "astro/zod";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { applicationSchema, literatureSchema } from "./schemas";
+import { applicationSchema, literatureSchema, resourceSchema } from "./schemas";
 import { TAG_DIMS, TOPIC_TAGS } from "./tags";
 
 // Field-level rules live in the schemas (same ones the site build enforces);
@@ -10,6 +10,10 @@ import { TAG_DIMS, TOPIC_TAGS } from "./tags";
 type Raw = { id?: string; doi?: string; arxiv?: string; papers?: string[] };
 const lit = parse(readFileSync("src/data/literature.yaml", "utf8")) as Raw[];
 const apps = parse(readFileSync("src/data/applications.yaml", "utf8")) as Raw[];
+const resources = parse(readFileSync("src/data/resources.yaml", "utf8")) as Record<
+  string,
+  string
+>[];
 
 describe("literature.yaml", () => {
   it("matches the site schema", () => {
@@ -56,6 +60,48 @@ describe("applications.yaml", () => {
       expect(a.id, "entry missing id").toBeTruthy();
       for (const p of a.papers ?? []) expect(ids.has(p), `${a.id} → ${p}`).toBe(true);
     }
+  });
+});
+
+const SENTENCE_END = /\.\)?$/;
+const SITE_LINK = /\]\((\/[^)#]*)/g;
+const TRAILING_SLASH = /\/$/;
+
+describe("resources.yaml", () => {
+  it("matches the site schema", () => {
+    z.array(resourceSchema).parse(resources);
+  });
+  it("has unique ids and URLs", () => {
+    for (const e of resources) expect(e.id, "entry missing id").toBeTruthy();
+    expect(new Set(resources.map((e) => e.id)).size).toBe(resources.length);
+    expect(new Set(resources.map((e) => e.url)).size).toBe(resources.length);
+  });
+  // Resources.astro writes "Good for:" and the cost after these, so each must end a sentence.
+  it("ends every text field with a full stop", () => {
+    for (const e of resources)
+      for (const k of ["blurb", "good", "notFor"])
+        if (e[k]) expect(e[k], `${e.id}.${k}`).toMatch(SENTENCE_END);
+  });
+  // Component output skips the build's link check, so check internal links here.
+  it("links only to pages that exist", () => {
+    for (const e of resources)
+      for (const k of ["blurb", "good", "notFor"])
+        for (const [, path] of (e[k] ?? "").matchAll(SITE_LINK)) {
+          const page = `src/content/docs${path.replace(TRAILING_SLASH, "") || "/index"}`;
+          const found = [".md", ".mdx", "/index.md", "/index.mdx"].some((x) =>
+            existsSync(page + x),
+          );
+          expect(found, `${e.id}: ${path}`).toBe(true);
+        }
+  });
+});
+
+describe("skills/", () => {
+  it("has a section on the prompts-and-skills page for each skill", () => {
+    const page = readFileSync("src/content/docs/best-practices/prompts-and-skills.mdx", "utf8");
+    const skills = readdirSync("skills", { withFileTypes: true }).filter((d) => d.isDirectory());
+    expect(skills.length).toBeGreaterThan(0);
+    for (const d of skills) expect(page, d.name).toContain(`### ${d.name}`);
   });
 });
 
