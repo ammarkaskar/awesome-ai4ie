@@ -906,6 +906,18 @@
   type: [method]
   added: 2026-11
 
+- id: neoDeepLearningbasedHyperspectral2027
+  title: "Deep learning-based hyperspectral imaging for the identification and quantification of multi-component polypropylene blends"
+  authors: ["Neo, E. R. K."]
+  etAl: true
+  year: 2027
+  doi: "10.1016/j.wasman.2026.115988"
+  blurb: "An NIR hyperspectral CNN detects talc, PE and flame-retardant additives in PP for recycling sorting (0.934 accuracy on unseen blends), though from 44 lab-made samples and missing the flame retardant below about 3 wt%."
+  ie: [circular]
+  ml: [cv]
+  type: [method, dataset]
+  added: 2026-11
+
 # ── Industrial symbiosis ─────────────────────────────────────────────────────
 - id: zhaoConstructionWastetoresourceKnowledge2025
   title: "Construction of waste-to-resource knowledge graph for industrial symbiosis identification using large language models"
@@ -1093,6 +1105,19 @@
   blurb: "Applies Bayesian MFA to England's 2019 construction aggregates: reported data cover 20% of the system, expert priors fill the rest, giving 146 stocks and flows with credible intervals."
   ie: [sem]
   topic: [buildings]
+  ml: [tabular-ml, uncertainty]
+  type: [method]
+  added: 2026-11
+
+- id: zhuMappingAluminumFlows2026
+  title: "Mapping aluminum flows in the United States using advanced Bayesian material flow analysis"
+  authors: ["Zhu, Y."]
+  etAl: true
+  year: 2026
+  doi: "10.1021/acs.est.6c02808"
+  blurb: "ARCADE, an open Bayesian MFA framework that maps data pedigree to noise and carries the 2017 posterior into 2022, reconciles US aluminum: end-of-life collection 67.6% [62.3, 73.9] in 2022."
+  ie: [sem]
+  topic: [metals]
   ml: [tabular-ml, uncertainty]
   type: [method]
   added: 2026-11
