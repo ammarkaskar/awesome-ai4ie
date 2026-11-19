@@ -51,6 +51,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitest/coverage-v8": "4.1.12",
+    "happy-dom": "21.0.4",
     "jsonld": "9.0.0",
     "n3": "2.13.12",
     "playwright": "1.64.0",

@@ -43,6 +43,17 @@ export function emptyMessage(f: Filter, label: (dim: TagDim, tag: string) => str
   return `No entry is tagged ${tags}. ${remove}`;
 }
 
+/** The entry a URL fragment names (`#zhao-2025`), or null when it names none of them. */
+export function hashTarget(hash: string, ids: ReadonlySet<string>): string | null {
+  let id: string;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    return null; // a malformed escape, like "#%E0"
+  }
+  return ids.has(id) ? id : null;
+}
+
 /** Read a view from a query string. Unknown keys and unknown sort values are
  * ignored. A retired tag (`?ie=mfa`) reads as its replacement (`?ie=sem`), and
  * a tag that moved dimension follows it (`?ie=uncertainty` to `ml`). A retired tag

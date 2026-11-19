@@ -86,6 +86,22 @@ export function scores(query: ArrayLike<number>, vectors: ArrayLike<number>[]): 
   });
 }
 
+/** For each vector, the indices of the `k` (at most MAX_HITS) others that `rank` keeps,
+ * best first; a missing vector gets and gives none. Vectors are scaled to unit length here. */
+export function nearest(vectors: (ArrayLike<number> | undefined)[], k: number): number[][] {
+  const units = vectors.map((v) => v && unit(Array.from(v)));
+  return units.map((v, i) => {
+    if (!v) return [];
+    const others = units.flatMap((w, j) => (w && j !== i ? [{ j, w }] : []));
+    return rank(
+      v,
+      others.map((o) => o.w),
+    )
+      .slice(0, k)
+      .map((n) => others[n].j);
+  });
+}
+
 /** Indices of the entries at or above MIN_SCORE, best first, at most MAX_HITS.
  * Vectors must be unit length, so the dot product is the cosine. */
 export function rank(query: ArrayLike<number>, vectors: ArrayLike<number>[]): number[] {
