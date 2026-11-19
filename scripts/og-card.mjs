@@ -62,21 +62,23 @@ await page.evaluate(
     card.append(h1, flow);
     document.body.replaceChildren(card);
     document
-      .querySelectorAll(
-        "#og .flow figcaption, #og .flow-readout, #og .flow-hit, #og .flow-plate--wide",
-      )
+      .querySelectorAll("#og .flow figcaption, #og .flow-readout, #og .flow-hit")
       .forEach((el) => {
         el.remove();
       });
 
     // Stretch the figure from its box to the card: bands run long, labels keep their size.
-    // The card stretches the compact plate. X0 and X1 are where its bands start and end:
-    // X0 + NODE and the compact X1 in FlowFigure.astro.
-    const svg = flow.querySelector("svg");
+    // The page's script fitted the plate and wrote where its bands start and end. A copy
+    // replaces it, so that script's resize observer does not fit it again.
+    const fitted = flow.querySelector("svg");
+    if (!fitted.dataset.x1) throw new Error("Fig. 1 was not fitted: its svg has no data-x1");
+    const svg = fitted.cloneNode(true);
+    fitted.replaceWith(svg);
+    const H = svg.viewBox.baseVal.height;
     const height = 232;
     svg.setAttribute("viewBox", `0 0 1200 ${height}`);
     svg.removeAttribute("width");
-    const [X0, X1, SY, LEFT, RIGHT] = [268, 500, height / 420, 300, 900];
+    const [X0, X1, SY, LEFT, RIGHT] = [+svg.dataset.x0, +svg.dataset.x1, height / H, 300, 900];
     const sx = (RIGHT - LEFT) / (X1 - X0);
     const bands = svg.querySelector(".flow-bands");
     bands.setAttribute("transform", `translate(${LEFT - X0 * sx} 0) scale(${sx} ${SY})`);
