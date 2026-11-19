@@ -95,9 +95,9 @@ or tapping the tile inks them in again.
   holding exactly the papers it counts. Labels are the first words of each tag's full name.
   Pointing at a band lifts it and fades the rest. Pointing at, focusing or tapping a node
   lights its bands and names its reach in a live readout line under the plate; on touch the
-  first tap lights a node and the second opens its list. On load the bands run in once from
-  the fields while the title's end mark inks in: together the site's one entrance, under a
-  second. Reduced motion skips both.
+  first tap lights a node and the second opens its list. On load each band pours once from
+  its field along its own curve, field by field from the top, while the title's end mark
+  inks in: together the site's one entrance, under a second. Reduced motion skips both.
 - **Fig. 2.** The see, read, try path for one map cell, each step topped by the ink of the
   chapter it links to.
 - **Numbered tables.** A bold "Table N.N" title above, a source line below. Numbering and
