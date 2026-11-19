@@ -67,6 +67,11 @@ If a suggestion doesn't hold up, say why in the issue and close it.
   openalex.org/settings/api raises the daily budget). The repository setting *Allow GitHub Actions to
   create and approve pull requests* (Settings, Actions, General) must be on. To catch up on a
   longer gap, run `node scripts/openalex-candidates.mjs --since <date> --limit <n>` locally.
+- **Meaning search quality.** After changing `src/data/search-eval.yaml`, the embedding model or
+  `MIN_SCORE`, run `pnpm run embed && pnpm run search-eval` with `CLOUDFLARE_ACCOUNT_ID` and
+  `CLOUDFLARE_API_TOKEN` (a token with Workers AI: Read) set. Tune `MIN_SCORE` on the tuning
+  half only, and set `HIT1_MIN` and `MRR_MIN` in `scripts/lib/eval-metrics.mjs` just below the
+  held-out scores it prints.
 - **Citation records.** After a publisher corrects a record at Crossref, run
   `pnpm run citations -- --refresh` and review the diff of `src/data/citations.json` before
   you commit it.
