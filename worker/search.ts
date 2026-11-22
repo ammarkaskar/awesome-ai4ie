@@ -10,11 +10,18 @@ import {
   unit,
 } from "../src/lib/semantic.ts";
 
+export type RateLimiter = { limit(opts: { key: string }): Promise<{ success: boolean }> };
+
 export type Env = {
   AI: { run(model: string, input: object): Promise<{ data: number[][] }> };
   ASSETS: { fetch(req: Request | string): Promise<Response> };
-  SEARCH_LIMIT: { limit(opts: { key: string }): Promise<{ success: boolean }> };
-  SEARCH_LIMIT_GLOBAL: { limit(opts: { key: string }): Promise<{ success: boolean }> };
+  SEARCH_LIMIT: RateLimiter;
+  SEARCH_LIMIT_GLOBAL: RateLimiter;
+  CONTRIBUTE_LIMIT?: RateLimiter;
+  CONTRIBUTE_LIMIT_GLOBAL?: RateLimiter;
+  POLL?: { getByName(name: string): { fetch(request: Request): Promise<Response> } };
+  TURNSTILE_SECRET_KEY?: string;
+  GITHUB_ISSUES_TOKEN?: string;
 };
 
 // Longer than any question a reader types; caps what one request can spend.

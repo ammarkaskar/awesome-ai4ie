@@ -160,3 +160,24 @@ go to the Worker instead, as a Workers custom domain (a zone on the same Cloudfl
    of `src/content/docs/literature.mdx`.
 
 To roll back, delete the Worker's custom domain and redo the Pages steps.
+
+### Contributions and poll setup
+
+The public site needs to run on the Worker for the form and poll to work. Both features
+use Cloudflare Turnstile and share per-IP and location-wide write limits. The first Worker
+deploy creates the poll's `POLL` Durable Object. Each Worker Preview has its own poll storage.
+
+1. Create a Turnstile widget for the public Worker hostname in the Cloudflare dashboard.
+   Choose Managed or Non-interactive mode.
+2. Set the public widget key in the GitHub repository variable `PUBLIC_TURNSTILE_SITE_KEY`.
+   CI includes this key in the Astro build. Put it in local `.env` for local builds.
+3. Set the matching Worker secret with `pnpm exec wrangler secret put TURNSTILE_SECRET_KEY`.
+   Both endpoints return `503` without it. For local development, use Cloudflare's
+   [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/).
+4. For contributions, create a fine-grained GitHub token with `Issues: Read and write` scoped
+   to `simonvanlierde/awesome-ai4ie`. Store it with
+   `pnpm exec wrangler secret put GITHUB_ISSUES_TOKEN`. Create the labels
+   `community-submission`, `golden-question`, `ai-mistake`, and `community-comment` if needed.
+   The `entry` label already exists. Only the contribution form needs this token.
+5. Open `/contribute/` on the Worker. Check that the poll shows counts and that the contribution
+   form shows its verification widget. Check both fallback links with JavaScript disabled.

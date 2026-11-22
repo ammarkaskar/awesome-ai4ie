@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POLL_OPTION_IDS } from "../src/lib/poll";
 import { EMBED_DIM, EMBED_MODEL, queryText } from "../src/lib/semantic";
-import worker from "./index";
-import { AI_TIMEOUT_MS, limitKey } from "./search";
+import worker, { Poll } from "./index";
+import { AI_TIMEOUT_MS, type Env, limitKey } from "./search";
 
 const paper = (title: string, v?: number[]) => ({
   id: title,
@@ -541,5 +542,376 @@ describe("/mcp", () => {
       localhost: await status("http://localhost:4321"),
       none: await status(),
     }).toEqual({ evil: 403, lookalike: 403, null: 403, self: 200, localhost: 200, none: 200 });
+  });
+});
+
+function memoryPoll() {
+  let committed: unknown;
+  let pending = Promise.resolve();
+  let fail = false;
+  const object = new Poll({
+    storage: {
+      get: async <T>() => structuredClone(committed) as T | undefined,
+      transaction: (callback) => {
+        const result = pending.then(async () => {
+          let next = structuredClone(committed);
+          const response = await callback({
+            get: async <Value>() => structuredClone(next) as Value | undefined,
+            put: (_key, value) => {
+              next = structuredClone(value);
+              return Promise.resolve();
+            },
+          });
+          if (fail) {
+            fail = false;
+            throw new Error("Commit failed");
+          }
+          committed = next;
+          return response;
+        });
+        pending = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        return result;
+      },
+    },
+  });
+  return {
+    getByName: () => object,
+    failNextCommit: () => {
+      fail = true;
+    },
+  };
+}
+
+type ContributeEnvOpts = {
+  allowed?: boolean | "throws";
+  globalAllowed?: boolean;
+  withLimiter?: boolean;
+  turnstileSecret?: string;
+  githubToken?: string;
+  poll?: ReturnType<typeof memoryPoll> | null;
+};
+
+function contributeEnv({
+  allowed = true,
+  globalAllowed = true,
+  withLimiter = true,
+  turnstileSecret = "test-turnstile-secret",
+  githubToken = "test-github-token",
+  poll = memoryPoll(),
+}: ContributeEnvOpts = {}): Env {
+  const base = env();
+  return {
+    ...base,
+    ...(withLimiter
+      ? {
+          CONTRIBUTE_LIMIT: {
+            limit: () =>
+              allowed === "throws"
+                ? Promise.reject(new Error("limiter down"))
+                : Promise.resolve({ success: allowed }),
+          },
+          CONTRIBUTE_LIMIT_GLOBAL: {
+            limit: () => Promise.resolve({ success: globalAllowed }),
+          },
+        }
+      : {}),
+    ...(poll ? { POLL: poll } : {}),
+    ...(turnstileSecret ? { TURNSTILE_SECRET_KEY: turnstileSecret } : {}),
+    ...(githubToken ? { GITHUB_ISSUES_TOKEN: githubToken } : {}),
+  };
+}
+
+describe("/api/contribute", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const validBody = {
+    type: "resource",
+    title: "OpenLCA Python bridge",
+    details: "A small Python wrapper that exports LCI results with unit checks.",
+    url: "https://example.org/openlca-bridge",
+    attribution: "A. Researcher",
+    token: "valid-turnstile-token",
+  };
+
+  it("rejects non-POST methods and non-JSON content types", async () => {
+    const e = contributeEnv();
+    const getRes = await worker.fetch(new Request("https://ai4ie.org/api/contribute"), e);
+    expect(getRes.status).toBe(405);
+    expect(getRes.headers.get("allow")).toBe("POST");
+
+    const plainRes = await worker.fetch(
+      post(JSON.stringify(validBody), { path: "/api/contribute", type: "text/plain" }),
+      e,
+    );
+    expect(plainRes.status).toBe(415);
+  });
+
+  it("returns 503 when secrets or rate limiters are missing", async () => {
+    const noTurnstile = contributeEnv({ turnstileSecret: "" });
+    const noGithub = contributeEnv({ githubToken: "" });
+    const noLimiter = contributeEnv({ withLimiter: false });
+    const req = () => post(JSON.stringify(validBody), { path: "/api/contribute" });
+
+    expect((await worker.fetch(req(), noTurnstile)).status).toBe(503);
+    expect((await worker.fetch(req(), noGithub)).status).toBe(503);
+    expect((await worker.fetch(req(), noLimiter)).status).toBe(503);
+  });
+
+  it("enforces per-IP and global rate limits", async () => {
+    const req = () =>
+      post(JSON.stringify(validBody), { path: "/api/contribute", ip: "198.51.100.7" });
+    expect((await worker.fetch(req(), contributeEnv({ allowed: false }))).status).toBe(429);
+    expect((await worker.fetch(req(), contributeEnv({ globalAllowed: false }))).status).toBe(429);
+    expect((await worker.fetch(req(), contributeEnv({ allowed: "throws" }))).status).toBe(503);
+  });
+
+  it("validates payload fields and rejects any email field", async () => {
+    const e = contributeEnv();
+    const cases: unknown[] = [
+      { ...validBody, email: "person@example.org" },
+      { ...validBody, type: "unknown-type" },
+      { ...validBody, title: "ab" },
+      { ...validBody, title: "x".repeat(141) },
+      { ...validBody, details: "too short" },
+      { ...validBody, details: "x".repeat(4001) },
+      { ...validBody, url: "javascript:alert(1)" },
+      { ...validBody, url: "not-a-url" },
+      { ...validBody, attribution: "x".repeat(121) },
+      { ...validBody, token: "   " },
+    ];
+    for (const body of cases) {
+      // biome-ignore lint/performance/noAwaitInLoops: small sequential validation table
+      const r = await worker.fetch(post(JSON.stringify(body), { path: "/api/contribute" }), e);
+      expect(r.status).toBe(400);
+    }
+    const badJson = await worker.fetch(post("{bad", { path: "/api/contribute" }), e);
+    expect(badJson.status).toBe(400);
+  });
+
+  it("returns 403 when Turnstile rejects a token and 503 on Turnstile outage", async () => {
+    const e = contributeEnv();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ success: false }));
+    const rejected = await worker.fetch(
+      post(JSON.stringify(validBody), { path: "/api/contribute" }),
+      e,
+    );
+    expect(rejected.status).toBe(403);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("err", { status: 500 }));
+    const outage = await worker.fetch(
+      post(JSON.stringify(validBody), { path: "/api/contribute" }),
+      e,
+    );
+    expect(outage.status).toBe(503);
+  });
+
+  it("creates a labeled GitHub issue on success and adds candidate note for golden questions", async () => {
+    const e = contributeEnv();
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("turnstile")) return Response.json({ success: true });
+      return Response.json(
+        { number: 42, html_url: "https://github.com/simonvanlierde/awesome-ai4ie/issues/42" },
+        { status: 201 },
+      );
+    });
+
+    const res = await worker.fetch(
+      post(
+        JSON.stringify({
+          type: "golden-question",
+          title: "Scope 3 double counting check",
+          details: "Check whether an LLM spots double counting across tier-1 and tier-2 suppliers.",
+          token: "ok-token",
+        }),
+        { path: "/api/contribute", ip: "198.51.100.7" },
+      ),
+      e,
+    );
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      ok: true,
+      issueNumber: 42,
+      issueUrl: "https://github.com/simonvanlierde/awesome-ai4ie/issues/42",
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url).toBe("https://api.github.com/repos/simonvanlierde/awesome-ai4ie/issues");
+    const ghBody = JSON.parse(String(calls[1].init?.body)) as {
+      title: string;
+      body: string;
+      labels: string[];
+    };
+    expect(ghBody.title).toBe("[Golden question] Scope 3 double counting check");
+    expect(ghBody.labels).toEqual(["community-submission", "golden-question"]);
+    expect(ghBody.body).toContain("Anonymous");
+    expect(ghBody.body).toContain("candidate benchmark question");
+  });
+
+  it("returns 502 without leaking tokens when GitHub API fails", async () => {
+    const e = contributeEnv({ githubToken: "secret-pat-value" });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("turnstile")) return Response.json({ success: true });
+      return new Response("upstream error", { status: 500 });
+    });
+
+    const res = await worker.fetch(post(JSON.stringify(validBody), { path: "/api/contribute" }), e);
+    expect(res.status).toBe(502);
+    const text = await res.text();
+    expect(text).not.toContain("secret-pat-value");
+  });
+});
+
+describe("/api/poll", () => {
+  function vote(choices: string[]) {
+    return post(JSON.stringify({ choices, token: "ok" }), { path: "/api/poll" });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ success: true }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns zero counts on GET and requires storage and the Turnstile secret", async () => {
+    const e = contributeEnv();
+    const res = await worker.fetch(new Request("https://ai4ie.org/api/poll"), e);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      counts: Record<string, number>;
+      voters: number;
+      turnstileRequired: boolean;
+    };
+    expect(data.voters).toBe(0);
+    expect(data.turnstileRequired).toBe(true);
+    for (const id of POLL_OPTION_IDS) expect(data.counts[id]).toBe(0);
+
+    const noPoll = contributeEnv({ poll: null });
+    const noSecret = contributeEnv({ turnstileSecret: "" });
+    expect((await worker.fetch(new Request("https://ai4ie.org/api/poll"), noPoll)).status).toBe(
+      503,
+    );
+    expect((await worker.fetch(new Request("https://ai4ie.org/api/poll"), noSecret)).status).toBe(
+      503,
+    );
+    expect((await worker.fetch(vote(["golden-test"]), noPoll)).status).toBe(503);
+    expect((await worker.fetch(vote(["golden-test"]), noSecret)).status).toBe(503);
+  });
+
+  it("records multi-select votes, deduplicates choices, and updates counts", async () => {
+    const e = contributeEnv();
+    const vote1 = await worker.fetch(
+      post(
+        JSON.stringify({ choices: ["golden-test", "claim-ledger", "golden-test"], token: "ok" }),
+        {
+          path: "/api/poll",
+        },
+      ),
+      e,
+    );
+    expect(vote1.status).toBe(200);
+    const data1 = (await vote1.json()) as { counts: Record<string, number>; voters: number };
+    expect(data1.voters).toBe(1);
+    expect(data1.counts["golden-test"]).toBe(1);
+    expect(data1.counts["claim-ledger"]).toBe(1);
+    expect(data1.counts["compute-receipt"]).toBe(0);
+
+    const vote2 = await worker.fetch(
+      post(JSON.stringify({ choices: ["golden-test", "lci-human-review"], token: "ok" }), {
+        path: "/api/poll",
+      }),
+      e,
+    );
+    expect(vote2.status).toBe(200);
+    const getRes = await worker.fetch(new Request("https://ai4ie.org/api/poll"), e);
+    const data2 = (await getRes.json()) as { counts: Record<string, number>; voters: number };
+    expect(data2.voters).toBe(2);
+    expect(data2.counts["golden-test"]).toBe(2);
+    expect(data2.counts["claim-ledger"]).toBe(1);
+    expect(data2.counts["lci-human-review"]).toBe(1);
+  });
+
+  it("records concurrent votes and leaves totals intact after a failed commit", async () => {
+    const poll = memoryPoll();
+    const e = contributeEnv({ poll });
+    const read = async () =>
+      (await worker.fetch(new Request("https://ai4ie.org/api/poll"), e)).json();
+    const [first, second] = await Promise.all([
+      worker.fetch(vote(["golden-test", "claim-ledger"]), e),
+      worker.fetch(vote(["golden-test"]), e),
+    ]);
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const before = await read();
+    expect(before).toMatchObject({ voters: 2, counts: { "golden-test": 2, "claim-ledger": 1 } });
+
+    poll.failNextCommit();
+    expect((await worker.fetch(vote(["claim-ledger"]), e)).status).toBe(503);
+    expect(await read()).toEqual(before);
+
+    expect((await worker.fetch(vote(["claim-ledger"]), e)).status).toBe(200);
+    expect(await read()).toMatchObject({
+      voters: 3,
+      counts: { "golden-test": 2, "claim-ledger": 2 },
+    });
+  });
+
+  it("rejects invalid methods, content types, choices, and rate-limited requests", async () => {
+    const e = contributeEnv();
+    expect(
+      (await worker.fetch(new Request("https://ai4ie.org/api/poll", { method: "DELETE" }), e))
+        .status,
+    ).toBe(405);
+    expect(
+      (
+        await worker.fetch(
+          post('{"choices":["golden-test"]}', { path: "/api/poll", type: "text/plain" }),
+          e,
+        )
+      ).status,
+    ).toBe(415);
+    expect((await worker.fetch(post('{"choices":[]}', { path: "/api/poll" }), e)).status).toBe(400);
+    expect(
+      (await worker.fetch(post('{"choices":["not-a-norm"]}', { path: "/api/poll" }), e)).status,
+    ).toBe(400);
+    expect(
+      (
+        await worker.fetch(
+          post('{"choices":["golden-test"]}', { path: "/api/poll" }),
+          contributeEnv({ allowed: false }),
+        )
+      ).status,
+    ).toBe(429);
+  });
+
+  it("requires and verifies Turnstile on POST", async () => {
+    const e = contributeEnv({ turnstileSecret: "poll-secret" });
+    const missingToken = await worker.fetch(
+      post(JSON.stringify({ choices: ["golden-test"] }), { path: "/api/poll" }),
+      e,
+    );
+    expect(missingToken.status).toBe(400);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ success: false }));
+    const failed = await worker.fetch(
+      post(JSON.stringify({ choices: ["golden-test"], token: "bad" }), { path: "/api/poll" }),
+      e,
+    );
+    expect(failed.status).toBe(403);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ success: true }));
+    const ok = await worker.fetch(
+      post(JSON.stringify({ choices: ["golden-test"], token: "good" }), { path: "/api/poll" }),
+      e,
+    );
+    expect(ok.status).toBe(200);
   });
 });
